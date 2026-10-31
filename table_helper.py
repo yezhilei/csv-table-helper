@@ -6,6 +6,20 @@ from collections import Counter
 from pathlib import Path
 
 
+def read_headers(reader):
+    """读取并检查表头，返回可以选择的列名。"""
+    headers = next(reader, None)
+    if not headers:
+        raise ValueError("文件为空，或缺少表头。")
+    if any(not header.strip() for header in headers):
+        raise ValueError("表头不能包含空列名。")
+    if len(set(headers)) != len(headers):
+        raise ValueError("表头有重复列名，请先修改表头。")
+    if "检查结果" in headers:
+        raise ValueError("原表格已有“检查结果”列，请先修改该列名。")
+    return headers
+
+
 def check_table(input_path, column_name, output_dir):
     """读取原表格；输出带检查结果的表格和问题清单。"""
     input_path = Path(input_path).resolve()
@@ -19,22 +33,14 @@ def check_table(input_path, column_name, output_dir):
         raise FileExistsError("输出文件已存在。请换一个空文件夹，避免覆盖已有结果。")
 
     with input_path.open("r", encoding="utf-8-sig", newline="") as file:
-        reader = csv.reader(file)
-        headers = next(reader, None)
-        if not headers:
-            raise ValueError("文件为空，或缺少表头。")
-        if any(not header.strip() for header in headers):
-            raise ValueError("表头不能包含空列名。")
-        if len(set(headers)) != len(headers):
-            raise ValueError("表头有重复列名，请先修改表头。")
-        if "检查结果" in headers:
-            raise ValueError("原表格已有“检查结果”列，请先修改该列名。")
+        reader = csv.reader(file, strict=True)
+        headers = read_headers(reader)
         if column_name not in headers:
             raise ValueError("找不到指定列。可用列名：" + "、".join(headers))
         rows = []
-        for line_number, row in enumerate(reader, start=2):
+        for data_number, row in enumerate(reader, start=1):
             if len(row) != len(headers):
-                raise ValueError(f"第 {line_number} 条数据的列数与表头不同，请先检查文件。")
+                raise ValueError(f"第 {data_number} 条数据的列数与表头不同，请先检查文件。")
             rows.append(row)
 
     column_index = headers.index(column_name)
@@ -73,12 +79,23 @@ def main():
 
     try:
         input_path = args.input or input("CSV 文件路径：").strip().strip('"')
-        column = args.column or input("要检查的列名：").strip()
+        if args.column is not None:
+            column = args.column
+        else:
+            with Path(input_path).open("r", encoding="utf-8-sig", newline="") as file:
+                headers = read_headers(csv.reader(file, strict=True))
+            print("可检查的列：")
+            for index, header in enumerate(headers, start=1):
+                print(f"  {index}. {header}")
+            choice = input("请输入列序号：").strip()
+            if not choice.isdecimal() or not 1 <= int(choice) <= len(headers):
+                raise ValueError("列序号无效，请输入列表中的数字。")
+            column = headers[int(choice) - 1]
         output = args.output or input("结果保存文件夹：").strip().strip('"')
         if not input_path or not column or not output:
             raise ValueError("文件路径、列名和输出文件夹都不能为空。")
         result = check_table(input_path, column, output)
-    except (OSError, UnicodeError, csv.Error, ValueError) as error:
+    except (OSError, UnicodeError, csv.Error, ValueError, EOFError) as error:
         print(f"无法完成检查：{error}")
         return 1
 
